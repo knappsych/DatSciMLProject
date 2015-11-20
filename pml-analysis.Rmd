@@ -1,0 +1,209 @@
+---
+title: "Coursera ML Project"
+author: "William Knapp"
+output: html_document
+---
+
+The data analyzed and interpreted herein come from the
+[http://groupware.les.inf.puc-rio.br/har](Human Activity Recognition)
+project.
+
+#Reading in the data and examining it for problems
+```{r}
+dat<-read.csv("pml-training.csv")
+```
+After looking at the data structure, with data(str), it's clear that there
+are a number of variables that contain "NA", "", or "#DIV/0!" values. To
+avoid reading in integer variables as factors, let's reread in the data
+and specify what the na.strings are.
+
+```{r}
+dat<-read.csv("pml-training.csv", na.strings=c("NA","na","","#DIV/0!"))
+str(dat,list.len=length(dat))
+```
+
+I'd really like to avoid imputing missing values, so I'm going to
+see what the effects of removing any cases that are incomplete and
+removing any columns that are incomplete would have.
+
+```{r}
+sum(complete.cases(dat))
+```
+As there are no observations with complete cases, dropping rows without
+complete cases would leave us nothing in our training set, so that's
+not a feasible solution.
+
+Let's check on how many rows have NA values, hopefully we'll have significantly
+more than 0, which would allow us to drop those rows and run our learning
+algorithms on the remaining rows without NA values.
+
+```{r}
+hasna=0
+for(i in 1:length(dat)){
+    if(sum(is.na(dat[i]) + length(dat[i][]))) hasna = hasna+1
+}
+hasna
+```
+
+This tells us that out of the 160 potential predictors, only 33 of them have
+NA values. Let's build a new data.frame with the predictors without na values.
+
+
+```{r}
+training<-dat[1]
+dfindex=1;
+for(i in 2:length(dat)){
+    if(sum(is.na(dat[i]))==0){
+        dfindex = dfindex + 1
+        training[dfindex]=dat[i]
+    }
+}
+#If anyone knows a better way of doing this without a for loop. Please comment
+#my project.
+```
+
+This leaves us with 59 features ,but I don't think the first several features
+will be useful for classification so I'm omitting them from the training sets.
+
+```{r}
+training<-training[,-(1:7)]
+```
+That leaves us 52 features. I'll break my training data into training and testing
+sets. I'll use the testing subset to cross-validate my model and estimate the
+out of sample error.
+
+```{r}
+temp<-training
+library(caret)
+set.seed(2134)
+inTrain = createDataPartition(temp$classe, p = 3/4)[[1]]
+training = temp[ inTrain,]
+testing = temp[-inTrain,]
+```
+
+Let's see if any variables have near zero variability that we could get
+rid of.
+
+```{r}
+sum(nearZeroVar(training,saveMetrics=TRUE)$nzv)
+```
+
+There are none but let's try to reduce the complexity of the dataset using
+principal components analysis. Because we have negative feature values we
+probably should not take the logs of the training features.
+
+```{r}
+train.pca<-prcomp(training[,-(length(training))],center=TRUE,scale.=TRUE)
+plot(train.pca, type='l')
+```
+
+Analysis of the scree plot suggests we should keep the first 7 components,
+but I'd like to keep any variables that explain at least 2.5% of the variance.
+
+```{r}
+summary(train.pca)
+```
+If we're going to keep the components that explain 2.5% of the variance, we'll
+retain the first 11 components.
+
+#Random Forest Model
+
+Let's preprocess our data using these components and use random forests
+as our learning algorithm.
+
+```{r cache=TRUE}
+preProc<-preProcess(training[,-length(training)], method="pca", pcaComp=11)
+trainPC<-predict(preProc,training[,-length(training)])
+trainPC<-data.frame(trainPC, classe=training$classe)
+rffit<-train(classe~.,method="rf",data=trainPC, proxy=TRUE)
+confusionMatrix(training$classe,predict(rffit,trainPC))
+```
+
+From examining the confusion matrix, we can see that the model perfectly
+predicts the class of exercise from the first 11 principle components.
+
+Now let's cross validate with our test set and estimate our out of sample error.
+
+```{r}
+testPC<-predict(preProc,testing[,-length(testing)])
+confusionMatrix(testing$classe,predict(rffit,testPC))
+```
+We can see that the accuracy in the training set was also very high
+(i.e. .9547). Thus the estimated out of sample error rate is 1-.9547
+= .0453. Thus we have an error rate of less than 5%. Not too shabby.
+
+#Boosting Model
+
+Let's see if we can do any better with boosting.
+
+```{r cache=TRUE}
+boostfit<-train(classe~., method="gbm",data=trainPC, verbose=FALSE)
+confusionMatrix(training$classe,predict(boostfit,trainPC))
+```
+This method is much less accurate, so I'll stick with the random forest
+model on the true testing data.
+
+```{r}
+testdat<-dat<-read.csv("pml-testing.csv", na.strings=c("NA","na","","#DIV/0!"))
+testdatPC<-predict(preProc,testdat)
+predictions<-predict(rffit,testdatPC)
+```
+
+Finally, lets use the function provided in the instructions to create
+files to submit our predictions on the 20 sample test set.
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictions)
+```
+<!--
+rfmod<-train(classe~.,data=train,method="rf", proxy=TRUE)
+boostmod<-train(classe~.,data=train, method="gbm",verbose=FALSE)
+classe<-train$classe
+rfpred<-predict(rfmod,train)
+boostpred<-predict(boostmod,train)
+
+
+
+
+Video 2-3
+training method="cv" indicates do cross validation
+training number="n" Tells how many sets to perform cross validation on.
+
+Video 2-5
+training preProcess=c("center","scale") This will standardize the variables
+
+Video 2-5 preprocess(trainingdata, method="knnImpute") will impute missing values
+@ 9:54 Statement that if caret handles pre-processing, it will perform the same
+preprocessing on the test set using the values from the training set.
+
+Video 2-6 10:00
+nsv<-NearZeroVar(training,saveMetrics=TRUE) finds variables with almost no variability
+these could be removed to improve speed and potentially accuracy using variables that
+actually vary
+
+Video 2-7 8:45
+prcomp(log10(train[,-outcome]+1)) taking log useful for principle components, but can't
+take log of zero so add 1
+10:13
+preProc<-preProcess(log10(train[,-outcome]+1), method"pca",pcaComp=number principle components you want)
+predictions<-predict(preProc,log10(train[,-outcome]+1))
+
+11:25
+modelfit<-train(outcome~.,method="whatever",data=predictions)
+
+11:30
+testpredictions<-predict(preProc,log10(test[,-outcome]+1))
+confusionMatrix(test$outcome,predict(modelfit,testpredictions))
+
+12:30
+modelfit<-train(train$outcome~.,method="glm",preProcess="pca", data=train)
+confusionMatrix(test$outcome,predict(modelfit,testing))
+-->
